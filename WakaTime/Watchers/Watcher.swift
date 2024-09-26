@@ -7,19 +7,24 @@ class Watcher: NSObject {
     private let monitorQueue = DispatchQueue(label: "com.WakaTime.Watcher.monitorQueue", qos: .utility)
 
     var appVersions: [String: String] = [:]
+    var eventSourceObserver: EventSourceObserver?
     var heartbeatEventHandler: HeartbeatEventHandler?
     var statusBarDelegate: StatusBarDelegate?
     var lastCheckedA11y = Date()
     var isBuilding = false
     var activeApp: NSRunningApplication?
+
     private var observer: AXObserver?
     private var observingElement: AXUIElement?
     private var observingActivityTextElement: AXUIElement?
     private var fileMonitor: FileMonitor?
     private var selectedText: String?
+    private var lastValidHeartbeatForApp = [String: HeartbeatData]()
 
     override init() {
         super.init()
+
+        eventSourceObserver = EventSourceObserver(pollIntervalInSeconds: 1)
 
         NSWorkspace.shared.notificationCenter.addObserver(
             self,
@@ -31,27 +36,6 @@ class Watcher: NSObject {
         if let app = NSWorkspace.shared.frontmostApplication {
             handleAppChanged(app)
         }
-
-        /*
-        NSEvent.addGlobalMonitorForEvents(
-            matching: [NSEvent.EventTypeMask.keyDown],
-            handler: handleKeyboardEvent
-        )
-        */
-
-        /*
-        do {
-            try EonilFSEvents.startWatching(
-                paths: ["/"],
-                for: ObjectIdentifier(self),
-                with: { event in
-                    // NSLog(event)
-                }
-            )
-        } catch {
-            NSLog("Failed to setup FSEvents: \(error.localizedDescription)")
-        }
-        */
     }
 
     deinit {
@@ -66,7 +50,10 @@ class Watcher: NSObject {
 
     private func handleAppChanged(_ app: NSRunningApplication) {
         if app != activeApp {
-            NSLog("App changed from \(activeApp?.localizedName ?? "nil") to \(app.localizedName ?? "nil")")
+            // swiftlint:disable line_length
+            Logging.default.log("App changed from \(activeApp?.localizedName ?? "nil") to \(app.localizedName ?? "nil") (\(app.bundleIdentifier ?? "nil"))")
+            eventSourceObserver?.stop()
+            // swiftlint:enable line_length
             if let oldApp = activeApp { unwatch(app: oldApp) }
             activeApp = app
             if let bundleId = app.bundleIdentifier, MonitoringManager.isAppMonitored(for: bundleId) {
@@ -75,11 +62,6 @@ class Watcher: NSObject {
         }
 
         setAppVersion(app)
-    }
-
-    func handleKeyboardEvent(event: NSEvent!) {
-        // NSLog("keyDown")
-        // TODO: call eventHandler to send heartbeat
     }
 
     private func setAppVersion(_ app: NSRunningApplication) {
@@ -108,7 +90,7 @@ class Watcher: NSObject {
                 let result = AXUIElementSetAttributeValue(axApp, "AXManualAccessibility" as CFString, true as CFTypeRef)
                 if result.rawValue != 0 {
                     let appName = app.localizedName ?? "UnknownApp"
-                    NSLog("Setting AXManualAccessibility on \(appName) failed (\(result.rawValue))")
+                    Logging.default.log("Setting AXManualAccessibility on \(appName) failed (\(result.rawValue))")
                 }
             }
 
@@ -123,43 +105,6 @@ class Watcher: NSObject {
                 try observer.add(notification: kAXValueChangedNotification, element: axApp, refcon: this)
             }
 
-            /*
-            if app.monitoredApp == .iterm2 {
-                try observer.add(notification: kAXValueChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXMainWindowChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXApplicationActivatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXApplicationDeactivatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXApplicationHiddenNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXApplicationShownNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXWindowCreatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXWindowMovedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXWindowResizedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXWindowMiniaturizedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXWindowDeminiaturizedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXDrawerCreatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSheetCreatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXHelpTagCreatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXElementBusyChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXMenuOpenedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXMenuClosedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXMenuItemSelectedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXRowCountChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXRowExpandedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXRowCollapsedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSelectedCellsChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXUnitsChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSelectedChildrenMovedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSelectedChildrenChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXResizedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXMovedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXCreatedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSelectedRowsChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXSelectedColumnsChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXTitleChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXLayoutChangedNotification, element: axApp, refcon: this)
-                try observer.add(notification: kAXAnnouncementRequestedNotification, element: axApp, refcon: this)
-            }*/
-
             observer.addToRunLoop()
             self.observer = observer
             self.observingElement = axApp
@@ -170,9 +115,38 @@ class Watcher: NSObject {
                     self.documentPath = currentPath
                 }
                 observeActivityText(activeWindow: activeWindow)
+            } else {
+                eventSourceObserver?.start { [weak self] in
+                    self?.callbackQueue.async {
+                        guard
+                            let app = self?.activeApp, !MonitoringManager.isAppXcode(app),
+                            let bundleId = app.bundleIdentifier
+                        else { return }
+
+                        var heartbeat = MonitoringManager.heartbeatData(app)
+
+                        if let heartbeat {
+                            self?.lastValidHeartbeatForApp[bundleId] = heartbeat
+                        } else {
+                            heartbeat = self?.lastValidHeartbeatForApp[bundleId]
+                        }
+
+                        if let heartbeat {
+                            self?.heartbeatEventHandler?.handleHeartbeatEvent(
+                                app: app,
+                                entity: heartbeat.entity,
+                                entityType: EntityType.app,
+                                project: heartbeat.project,
+                                language: heartbeat.language,
+                                category: heartbeat.category,
+                                isWrite: false
+                            )
+                        }
+                    }
+                }
             }
         } catch {
-            NSLog("Failed to setup AXObserver: \(error.localizedDescription)")
+            Logging.default.log("Failed to setup AXObserver: \(error.localizedDescription)")
 
             // TODO: App could be still launching, retry setting AXObserver in 20 seconds for this app
 
@@ -238,7 +212,7 @@ class Watcher: NSObject {
             if documentPath != oldValue {
                 guard let newPath = documentPath else { return }
 
-                NSLog("Document changed: \(newPath)")
+                Logging.default.log("Document changed: \(newPath)")
 
                 handleNotificationEvent(path: newPath, isWrite: false)
                 fileMonitor = nil
@@ -258,6 +232,7 @@ class Watcher: NSObject {
                 app: app,
                 entity: path.path,
                 entityType: EntityType.file,
+                project: nil,
                 language: nil,
                 category: self.isBuilding ? Category.building : Category.coding,
                 isWrite: isWrite
@@ -278,7 +253,6 @@ private func observerCallback(
 
     guard let app = this.activeApp else { return }
 
-    // print(notification)
     let axNotification = AXUIElementNotification.notificationFrom(string: notification as String)
     switch axNotification {
         case .selectedTextChanged:
@@ -291,49 +265,20 @@ private func observerCallback(
                     app: app,
                     entity: currentPath.path,
                     entityType: EntityType.file,
+                    project: nil,
                     language: nil,
                     category: this.isBuilding ? Category.building : Category.coding,
                     isWrite: false)
-            } else {
-                if let heartbeat = MonitoringManager.heartbeatData(app, element: element) {
-                    this.heartbeatEventHandler?.handleHeartbeatEvent(
-                        app: app,
-                        entity: heartbeat.entity,
-                        entityType: EntityType.app,
-                        language: heartbeat.language,
-                        category: heartbeat.category,
-                        isWrite: false)
-                }
             }
         case .focusedUIElementChanged:
             if MonitoringManager.isAppXcode(app) {
                 guard let currentPath = element.currentPath else { return }
 
                 this.documentPath = currentPath
-            } else {
-                if let heartbeat = MonitoringManager.heartbeatData(app, element: element) {
-                    this.heartbeatEventHandler?.handleHeartbeatEvent(
-                        app: app,
-                        entity: heartbeat.entity,
-                        entityType: EntityType.app,
-                        language: heartbeat.language,
-                        category: heartbeat.category,
-                        isWrite: false)
-                }
             }
         case .focusedWindowChanged:
             if MonitoringManager.isAppXcode(app) {
                 this.observeActivityText(activeWindow: element)
-            } else {
-                if let heartbeat = MonitoringManager.heartbeatData(app, element: element) {
-                    this.heartbeatEventHandler?.handleHeartbeatEvent(
-                        app: app,
-                        entity: heartbeat.entity,
-                        entityType: EntityType.app,
-                        language: heartbeat.language,
-                        category: heartbeat.category,
-                        isWrite: false)
-                }
             }
         case .valueChanged:
             if MonitoringManager.isAppXcode(app) {
@@ -342,16 +287,6 @@ private func observerCallback(
                     if let path = this.documentPath {
                         this.handleNotificationEvent(path: path, isWrite: false)
                     }
-                }
-            } else {
-                if let heartbeat = MonitoringManager.heartbeatData(app, element: element) {
-                    this.heartbeatEventHandler?.handleHeartbeatEvent(
-                        app: app,
-                        entity: heartbeat.entity,
-                        entityType: EntityType.app,
-                        language: heartbeat.language,
-                        category: heartbeat.category,
-                        isWrite: false)
                 }
             }
         default:

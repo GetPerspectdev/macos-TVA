@@ -8,18 +8,25 @@ class MonitoringManager {
     }
 
     static func isAppMonitored(for bundleId: String) -> Bool {
-        guard MonitoredApp.allBundleIds.contains(bundleId) else { return false }
+        guard
+            MonitoredApp.allBundleIds.contains(bundleId) ||
+            MonitoredApp.allBundleIds.contains(bundleId.replacingOccurrences(of: "-setapp$", with: "", options: .regularExpression))
+        else { return false }
+
+        guard
+            !MonitoredApp.unsupportedAppIds.contains(bundleId),
+            !MonitoredApp.unsupportedAppIds.contains(bundleId.replacingOccurrences(of: "-setapp$", with: "", options: .regularExpression))
+        else { return false }
 
         let isMonitoredKey = monitoredKey(bundleId: bundleId)
 
         if UserDefaults.standard.string(forKey: isMonitoredKey) != nil {
-            let isMonitored = UserDefaults.standard.bool(forKey: isMonitoredKey)
-            return isMonitored
+            return UserDefaults.standard.bool(forKey: isMonitoredKey)
         } else {
             UserDefaults.standard.set(true, forKey: isMonitoredKey)
             UserDefaults.standard.synchronize()
+            return false
         }
-        return true
     }
 
     static func isAppMonitored(_ app: NSRunningApplication) -> Bool {
@@ -44,109 +51,43 @@ class MonitoringManager {
         return bundleId == MonitoredApp.xcode.rawValue
     }
 
-    static func heartbeatData(_ app: NSRunningApplication, element: AXUIElement) -> HeartbeatData? {
+    static func isAppBrowser(for bundleId: String) -> Bool {
+        MonitoredApp.browserAppIds.contains(bundleId)
+    }
+
+    static func isAppBrowser(_ app: NSRunningApplication) -> Bool {
+        guard let bundleId = app.bundleIdentifier else { return false }
+
+        return isAppBrowser(for: bundleId)
+    }
+
+    static func heartbeatData(_ app: NSRunningApplication) -> HeartbeatData? {
+        let pid = app.processIdentifier
+
         guard
             let monitoredApp = app.monitoredApp,
-            let title = element.title(for: monitoredApp)
+            let activeWindow = AXUIElementCreateApplication(pid).activeWindow,
+            let entity = monitoredApp.entity(for: activeWindow, app)
         else { return nil }
 
-        switch monitoredApp {
-            case .figma:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .postman:
-                return HeartbeatData(
-                    entity: title,
-                    language: "HTTP Request",
-                    category: .debugging)
-            case .warp:
-                return HeartbeatData(
-                    entity: title,
-                    category: .coding)
-            case .rstudio:
-                return HeartbeatData(
-                    entity: title,
-                    category: .coding)
-            case .iterm:
-                return HeartbeatData(
-                    entity: title,
-                    category: .coding)
-            case .slack:
-                return HeartbeatData(
-                    entity: title,
-                    category: .communicating)
-            case .safari:
-                return HeartbeatData(
-                    entity: title,
-                    category: .browsing)
-            case .chrome:
-                return HeartbeatData(
-                    entity: title,
-                    category: .browsing)
-            case .arcbrowser:
-                return HeartbeatData(
-                    entity: title,
-                    category: .browsing)
-            case .edgebrowser:
-                return HeartbeatData(
-                    entity: title,
-                    category: .browsing)
-            case .imessage:
-                return HeartbeatData(
-                    entity: "iMessage",
-                    category: .communicating)
-            case .canva:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .whatsapp:
-                return HeartbeatData(
-                    entity: title,
-                    category: .meeting)
-            case .zoom:
-                return HeartbeatData(
-                    entity: title,
-                    category: .meeting)
-            case .notion:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .msexcel:
-                return HeartbeatData(
-                    entity: title,
-                    category: .building)
-            case .msoutlook:
-                return HeartbeatData(
-                    entity: title,
-                    category: .communicating)
-            case .msteams:
-                return HeartbeatData(
-                    entity: title,
-                    category: .meeting)
-            case .adobexd:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .premier:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .premierbeta:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .adobeillustrator:
-                return HeartbeatData(
-                    entity: title,
-                    category: .designing)
-            case .xcode:
-                fatalError("Xcode should never use window title")
-            case .linear:
-                return HeartbeatData(
-                    entity: title,
-                    category: .communicating)
+        return HeartbeatData(
+            entity: entity,
+            project: monitoredApp.project(for: activeWindow),
+            language: monitoredApp.language,
+            category: monitoredApp.category
+        )
+    }
+
+    static var isMonitoringBrowsing: Bool {
+        for bundleId in MonitoredApp.browserAppIds {
+            guard
+                AppInfo.getAppName(bundleId: bundleId) != nil,
+                isAppMonitored(for: bundleId)
+            else { continue }
+
+            return true
         }
+        return false
     }
 
     static func set(monitoringState: MonitoringState, for bundleId: String) {
@@ -155,13 +96,24 @@ class MonitoringManager {
         // NSLog("Monitoring \(monitoringState == .on ? "enabled" : "disabled") for \(AppInfo.getAppName(bundleId: bundleId) ?? "")")
     }
 
+    static func enableByDefault(_ bundleId: String) {
+        if AppInfo.getIcon(bundleId: bundleId) != nil && AppInfo.getAppName(bundleId: bundleId) != nil {
+            MonitoringManager.set(monitoringState: .on, for: bundleId)
+        }
+        let setAppId = bundleId.appending("-setapp")
+        if AppInfo.getIcon(bundleId: setAppId) != nil && AppInfo.getAppName(bundleId: setAppId) != nil {
+            MonitoringManager.set(monitoringState: .on, for: setAppId)
+        }
+    }
+
     static func monitoredKey(bundleId: String) -> String {
         "is_\(bundleId)_monitored"
     }
 }
 
 struct HeartbeatData {
-  var entity: String
-  var language: String?
-  var category: Category?
+    var entity: String
+    var project: String?
+    var language: String?
+    var category: Category?
 }
